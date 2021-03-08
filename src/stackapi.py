@@ -10,21 +10,28 @@ import traceback
 API_KEY = config.api_key
 SECRET = config.secret_key
 API = "https://api.stackexchange.com/2.2/"
-rparams = {
+qparams = {
     "key": API_KEY,
     "site": "stackoverflow",
     "page": 1,
     "pagesize": 100,
-    "filter": "withbody",
+    "filter": "!-NChB_2XN8edH-0g63JoXl1a4d)x*wJYq",
+}
+
+aparams = {
+    "key": API_KEY,
+    "site": "stackoverflow",
+    "filter": "!9_bDE(fI5",
 }
 
 # Hold all details from a call to the API
 faq = []
+ans = []
 
 
 # Perform a GET request given a URL and search parameters
-def get(url):
-    resp = requests.get(url,params=rparams)
+def get(url, p):
+    resp = requests.get(url,params=p)
     return resp.json()
 
 
@@ -44,9 +51,10 @@ def get_related_tags(tag):
 # Does so for 100 results of a specific page
 # Calling function will advance the page and keep track of remaining request quota
 # Pagination call: https://api.stackexchange.com/2.2/tags/css/faq?page=1&pagesize=100&site=stackoverflow
+# Edited to use custom lag to get all relevant information
 def get_tag_faq(tag):
     request_url = API + "tags/" + tag + "/" + sk.search["faq"]
-    response = get(request_url)
+    response = get(request_url,qparams)
 
     # Extract Data
     # Provide checks for a key that may not be present in response
@@ -84,6 +92,10 @@ def get_tag_faq(tag):
             detail["last_updated"] = item["last_edit_date"]
         else:
             detail["last_updated"] = None
+        if "body" in item.keys():
+            detail["body"] = item["body"]
+        else:
+            detail["body"] = None
 
         faq.append(detail)
 
@@ -91,35 +103,31 @@ def get_tag_faq(tag):
     return (response["has_more"], response["quota_remaining"])
 
 
-def get_q(qid):
-    request_url = API + f"questions/{qid}?"
-    response = get(request_url)
+def get_answers():
+    ids = chain_ids() # used to chain Answer Ids together for api request
+    request_url = API + "answers/" + ids + "?"
+    response = get(request_url,aparams)
 
-    if "items" in response.keys():
-        question = response["items"][0]["body"]
-        return (qid,question)
-    else:
-        return (-1, -1)
+    for item in response["items"]:
+        detail = {}
+        if "body" in item.keys():
+            detail["body"] = item["body"]
+        else:
+            detail["body"] = None
+        if "answer_id" in item.keys():
+            detail["answer_id"] = item["answer_id"]
+        else:
+            detail["answer_id"] = None
 
-def get_a(aid):
-    request_url = API + f"answers/{aid}?"
-    response = get(request_url)
+        ans.append(detail)
 
-    if "items" in response.keys():
-        answer = response["items"][0]["body"]
-        return (aid,answer)
-    else:
-        return (-1, -1)
+    return response["quota_remaining"]
 
 
 def load_json():
     with open("faq.json", "r") as faq:
         loaded_json = json.load(faq)
         print(loaded_json)
-
-
-def show_keys(json):
-    print(json.keys())
 
 
 def collect_faq():
@@ -129,11 +137,11 @@ def collect_faq():
     try:
         while rq != 0 and has_more:
             has_more, rq = get_tag_faq("css")
-            curr_page = rparams["page"]
+            curr_page = qparams["page"]
             print(f"Processed page [{curr_page}], Quota remaining [{rq}]")
-            rparams["page"] = rparams["page"] + 1
+            qparams["page"] = qparams["page"] + 1
 
-        curr_page = rparams["page"]
+        curr_page = qparams["page"]
         print(f"\n\nData Collection Complete!\nPage Bookmark [{curr_page}]\nRemaining Quota [{rq}]")
     except KeyboardInterrupt as k:
         print("Program halted!")
@@ -143,84 +151,20 @@ def collect_faq():
         print(e)
         print(f"\n\nData Collection Interrupted!\nPage Bookmark [{curr_page}]\nRemaining Quota [{rq}]")
     finally:
-        with open("faq2.json", "a") as out:
+        with open("faq.json", "a") as out:
             json.dump({"details": faq}, out)
         print("\nJSON dumped to file")
 
 
-def collect_qa():
-    # load json
-    with open("faq.json", "r") as jfaq:
-        faqs = json.load(jfaq)
+# Given the answer IDs collected in faq.json, make API calls to get the answer bodies
+# Upto 100 semicolon delimited IDs
+# Read the JSON, buffer 100 Answer IDs, flush that buffer to make an API request, Collect, Repeat
+def collect_anwswers():
 
-    # Open file for reading encountered ids
-    f = open("enc.txt", "a").close()
-    f = open("enc.txt", "r")
-    processed = f.readlines()
-    for j in range(len(processed)): processed[j] = processed[j].strip()
-    f.close()
-
-    f = open("enc.txt", "a")
-    print(processed)
-    ids = []
-
-    try:
-        qa_bodies = []
-        i = 1
-        for qa in faqs["details"]:
-            if str(qa["question_id"]) in processed or str(qa["answer_id"]) in processed:
-                print("ID already encountered!")
-                continue
-
-            if qa["is_answered"]:
-                time.sleep(1)
-                qid, q = get_q(qa["question_id"])
-                aid, a = get_a(qa["answer_id"])
-
-                # Some API responses may not return any information
-                if (qid == -1) or (aid == -1):
-                    print("Missing information encountered!")
-                    continue
-
-                ids.append(qid)
-                ids.append(aid)
-
-                print(f"Processed QA [{i}]/[49300]")
-                i += 1
-
-                details = {
-                    "question_id": qid,
-                    "question": q,
-                    "answer_id": aid,
-                    "answer": a
-                }
-
-                qa_bodies.append(details)
-
-        print("QA Collection complete!")
-    except KeyboardInterrupt as k:
-        print("Program halted!")
-    except Exception as e:
-        print("Some error occured!")
-        traceback.print_exc(e)
-    finally:
-        print(f"Processed [{i}] QAs")
-        with open("qab.json", "a") as qab:
-            json.dump({"details": qa_bodies}, qab)
-            generate_encounter_ids(f, ids)
-        print("QA Collection successfully dumped!")
-
-
-def generate_encounter_ids(f, ids):
-    for id in ids:
-        f.write(f"{id}\n")
-
-    f.close()
 
 
 def main():
-     # collect_faq()
-     collect_qa()
+     collect_faq()
 
 
 if __name__ == '__main__':
