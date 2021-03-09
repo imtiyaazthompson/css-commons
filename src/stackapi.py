@@ -21,7 +21,7 @@ qparams = {
 aparams = {
     "key": API_KEY,
     "site": "stackoverflow",
-    "filter": "!9_bDE(fI5",
+    "filter": "!-*9WT_1d-uQq",
 }
 
 # Hold all details from a call to the API
@@ -103,9 +103,8 @@ def get_tag_faq(tag):
     return (response["has_more"], response["quota_remaining"])
 
 
-def get_answers():
-    ids = chain_ids() # used to chain Answer Ids together for api request
-    request_url = API + "answers/" + ids + "?"
+def get_answers(id_vector):
+    request_url = API + "answers/" + id_vector + "?"
     response = get(request_url,aparams)
 
     for item in response["items"]:
@@ -118,6 +117,14 @@ def get_answers():
             detail["answer_id"] = item["answer_id"]
         else:
             detail["answer_id"] = None
+        if "last_edit_date" in item.keys():
+            detail["last_updated"] = item["last_edit_date"]
+        else:
+            detail["last_updated"] = None
+        if "owner" in item.keys():
+            detail["owner"] = item["owner"]
+        else:
+            detail["owner"] = None
 
         ans.append(detail)
 
@@ -159,12 +166,53 @@ def collect_faq():
 # Given the answer IDs collected in faq.json, make API calls to get the answer bodies
 # Upto 100 semicolon delimited IDs
 # Read the JSON, buffer 100 Answer IDs, flush that buffer to make an API request, Collect, Repeat
-def collect_anwswers():
+def collect_answers():
+    # load the faq json
+    with open("faq.json", "r") as jfaq:
+        f = json.load(jfaq)
 
+    id_buff = []
+    i = 0
+    rq = -1
+
+    try:
+        for detail in f["details"]:
+
+            # Some questions do not have an accepted answer
+            if detail["answer_id"] is not None:
+                id_buff.append(str(detail["answer_id"]))
+            else:
+                continue
+
+            # flush id buffer to make API call
+            if len(id_buff) == 100:
+                id_vector = ';'.join(id_buff)
+                rq = get_answers(id_vector)
+                i += len(id_buff)
+                print(f"Processed [{i}] answers, Remaining Quota [{rq}]")
+                id_buff = []
+
+        # Process remaining (leftover) ids
+        id_vector = ';'.join(id_buff)
+        rq = get_answers(id_vector)
+        i += len(id_buff)
+        print(f"Processed [{i}] answers, Remaining Quota [{rq}]")
+
+        print("Data Collection Complete!")
+        print(f"Remaining Quota [{rq}]")
+    except KeyboardInterrupt as k:
+        print("Program Halted!")
+    except Exception as e:
+        traceback.print_exc(e)
+    finally:
+        with open("ans.json", "a") as out:
+            json.dump({"details": ans}, out)
+        print("\nJSON dumped to file")
 
 
 def main():
-     collect_faq()
+     # collect_faq()
+     collect_answers()
 
 
 if __name__ == '__main__':
